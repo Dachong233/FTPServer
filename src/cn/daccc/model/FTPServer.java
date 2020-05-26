@@ -13,6 +13,7 @@ public class FTPServer {
     private int port;
     private String serverRoot = "serverRoot";
     private String currentWorkingDirectory = "/";
+    private String uploadFile = "";
     /* 服务器 21控制端口*/
     private static ServerHandler serverHandler;
     private static Selector serverSelector;
@@ -24,6 +25,7 @@ public class FTPServer {
     private static Selector dataSelector;
     private static DataChannelSelectorThread dataThread;
     private static SocketChannel dataSocketChannel;
+    private boolean hasFinishUpload;
     private String clientIP;
     private int clientPort;
 
@@ -63,11 +65,32 @@ public class FTPServer {
         void outPrint (String msg);
     }
 
-    public interface DataHandler {
-        void read (SelectionKey key) throws IOException;
-        void startSuccess ();
-        void stopSuccess ();
-        void outPrint (String msg);
+    public class DataHandler {
+        private SelectionKey serverKey;
+
+        public void setServerKey (SelectionKey serverKey) {
+            this.serverKey = serverKey;
+        }
+
+        public void read (SelectionKey key) throws IOException {
+            serverHandler.outPrint("客户端正在上传文件:" + uploadFile);
+            SocketChannel socketChannel = ((SocketChannel) key.channel());
+            File file = new File(uploadFile);
+            FileChannel fileChannel = new FileOutputStream(file).getChannel();
+            ByteBuffer byteBuffer = ByteBuffer.allocate(1024);
+            long totalLen = 0;
+            int offset;
+            while ((offset = socketChannel.read(byteBuffer)) != -1) {
+                byteBuffer.flip();
+                fileChannel.write(byteBuffer);
+                byteBuffer.clear();
+                totalLen += offset;
+            }
+            fileChannel.close();
+            hasFinishUpload = true;
+            sendResponse(serverKey, Command.TRANSFER_RESP);
+            serverHandler.outPrint("文件传输完成！总大小:" + totalLen + "B≈" + totalLen / 1024 + "KB≈" + totalLen / 1024 / 1024 + "MB");
+        }
     }
 
     public FTPServer (String ip, int port, ServerHandler serverHandler) {
@@ -183,6 +206,9 @@ public class FTPServer {
             dataSocketChannel.configureBlocking(false);
             dataSelector = Selector.open();
             dataSocketChannel.register(dataSelector, SelectionKey.OP_READ);
+            dataThread = new DataChannelSelectorThread();
+            dataThread.start();
+            dataHandler = new DataHandler();
         } catch (IOException e) {
             serverHandler.outPrint(e.getMessage());
             e.printStackTrace();
@@ -195,6 +221,10 @@ public class FTPServer {
      */
     public void closeDataSocket () {
         try {
+            if (dataThread != null) {
+                dataThread.interrupt();
+                dataThread = null;
+            }
             dataSocketChannel.socket().close();
             dataSocketChannel.close();
             dataSelector.close();
@@ -243,8 +273,12 @@ public class FTPServer {
         return fileListString.toString();
     }
 
-    public void fileUpload (SelectionKey key, String filePath) throws IOException{
-
+    public void fileUpload (SelectionKey key, String filePath) throws IOException {
+        connectDataSocket();
+        uploadFile = serverRoot + currentWorkingDirectory + filePath;
+        System.out.println("上传:" + serverRoot + currentWorkingDirectory + filePath);
+        dataHandler.setServerKey(key);
+        sendResponse(key, Command.FILE_RESP_MODE);
     }
 
     public void fileDownload (SelectionKey key, String filePath) throws IOException {
@@ -292,10 +326,10 @@ public class FTPServer {
                     byteBuffer.clear();
                     currentLen += offset;
                     serverHandler.fileProcess(currentLen / (1.0 * totalLen));
-                    if ((count = count << 2) > 65535) {
+                    if ((count = count << 2) > 32767) {
                         //若不休眠，一次性发送过多数据容易造成流量控制，从而丢包
                         count = 1;
-                        Thread.sleep(1);
+                        Thread.sleep(4);
                     }
                 }
                 fileChannel.close();
@@ -311,7 +345,34 @@ public class FTPServer {
     private class DataChannelSelectorThread extends Thread{
         @Override
         public void run () {
+            while (!isInterrupted()) {
+                if (hasFinishUpload) {
+                    closeDataSocket();
+                    hasFinishUpload = false;
+                    break;
+                }
+                try {
+                    int selectCount = dataSelector.select();
+                    if (selectCount <= 0) {
+                        continue;
+                    }
+                    Iterator<SelectionKey> iterator = dataSelector.selectedKeys().iterator();
+                    while (iterator.hasNext()) {
+                        try {
+                            SelectionKey key = iterator.next();
+                            if (key.isReadable()) {
+                                dataHandler.read(key);
+                            }
+                            iterator.remove();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
 
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
         }
     }
 
