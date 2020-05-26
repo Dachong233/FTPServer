@@ -4,7 +4,7 @@ import cn.daccc.util.TimeUtil;
 import cn.daccc.model.FTPServer;
 import cn.daccc.model.MyServerHandler;
 import cn.daccc.util.IPUtil;
-import javafx.application.Platform;
+import javafx.event.ActionEvent;
 import javafx.fxml.Initializable;
 import javafx.scene.control.Button;
 import javafx.scene.control.ProgressBar;
@@ -13,6 +13,8 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.Pane;
 import javafx.stage.Stage;
 
+import java.awt.*;
+import java.io.File;
 import java.io.IOException;
 import java.net.URL;
 import java.util.ResourceBundle;
@@ -31,6 +33,13 @@ public class Controller implements Initializable {
     private static StringBuffer serverScreen = new StringBuffer();
     private static double process = 0;
     public ProgressBar process_file;
+    public TextField textField_serverRoot;
+    public TextField textField_username;
+    public TextField textField_password;
+    public Button btn_openServerRoot;
+
+    public TextField[] textFields;
+
 
     public Controller() { }
 
@@ -41,11 +50,18 @@ public class Controller implements Initializable {
     @Override
     public void initialize (URL location, ResourceBundle resources) {
         initView();
-//        new ScreenRefreshThread().start();
+        new initThread().start();
     }
 
     public void initView() {
-        textField_ipAddress.setText(IPUtil.getIPAddress());
+        textFields = new TextField[]{textField_ipAddress, textField_port,
+                textField_username, textField_password};
+    }
+
+    public void setEditable (boolean clickable) {
+        for (TextField textField : textFields) {
+            textField.setEditable(clickable);
+        }
     }
 
     /**
@@ -62,6 +78,7 @@ public class Controller implements Initializable {
                 clearScreen();
                 MyServerHandler handler = new MyServerHandler(this);
                 ftpServer = new FTPServer(ip, Integer.parseInt(port), handler);
+                ftpServer.setUser(textField_username.getText(), textField_password.getText());
                 ftpServer.start();
                 handler.setFtpServer(ftpServer);
                 hasOpen = true;
@@ -80,6 +97,7 @@ public class Controller implements Initializable {
                 e.printStackTrace();
             }
         }
+        setEditable(!hasOpen);
     }
 
 
@@ -99,17 +117,35 @@ public class Controller implements Initializable {
         process_file.setProgress(aProcess);
     }
 
-    private class ScreenRefreshThread extends Thread{
-        @Override
-        public void run () {
-            while (!isInterrupted()) {
-                try {
-                    Thread.sleep(5000);
-
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+    public void openServerRoot () {
+        try {
+            Desktop.getDesktop().open(new File(textField_serverRoot.getText()));
+        } catch (IOException e) {
+            File serverRoot = new File("serverRoot");
+            if (!serverRoot.exists()) {
+                if (serverRoot.mkdir()) {
+                    appendToScreen("创建FTP服务器根目录成功\n");
+                } else {
+                    appendToScreen("创建FTP服务器根目录失败\n");
                 }
             }
+            textField_serverRoot.setText(serverRoot.getAbsolutePath());
+        }
+    }
+
+    private class initThread extends Thread{
+        @Override
+        public void run () {
+            textField_ipAddress.setText(IPUtil.getIPAddress());
+            File serverRoot = new File("serverRoot");
+            if (!serverRoot.exists()) {
+                if (serverRoot.mkdir()) {
+                    appendToScreen("创建FTP服务器根目录成功\n");
+                } else {
+                    appendToScreen("创建FTP服务器根目录失败\n");
+                }
+            }
+            textField_serverRoot.setText(serverRoot.getAbsolutePath());
         }
     }
 }

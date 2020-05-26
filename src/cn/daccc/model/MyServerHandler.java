@@ -7,7 +7,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
-import java.util.Arrays;
 
 import static cn.daccc.model.FTPServer.Command.*;
 
@@ -78,14 +77,6 @@ public class MyServerHandler implements FTPServer.ServerHandler {
                 ftpServer.sendResponse(key, UTF8_RESP);
                 break;
             }
-            case USER_REQ: {
-                ftpServer.sendResponse(key, USER_RESP);
-                break;
-            }
-            case PASS_REQ: {
-                ftpServer.sendResponse(key,PASS_RESP);
-                break;
-            }
             case QUIT_REQ: {
                 ftpServer.sendResponse(key, QUIT_RESP);
                 break;
@@ -93,6 +84,14 @@ public class MyServerHandler implements FTPServer.ServerHandler {
             default: {
                 String subCommand = command.substring(0, 4);
                 switch (subCommand){
+                    case USER_REQ: {
+                        ftpServer.user(key, command.replace(subCommand + " ", "").replaceAll("[\r\n]", ""));
+                        break;
+                    }
+                    case PASS_REQ: {
+                        ftpServer.password(key, command.replace(subCommand + " ", "").replaceAll("[\r\n]", ""));
+                        break;
+                    }
                     case PORT_REQ:{
                         String[] clientInfo = command.replaceAll("[\r\n]", "").substring(5).split(",");
                         if (clientInfo.length < 6) {
@@ -119,6 +118,10 @@ public class MyServerHandler implements FTPServer.ServerHandler {
                     } case PUT_REQ: {
                         String filePath = command.replace(subCommand + " ", "").replace("\r\n", "");
                         ftpServer.fileUpload(key, filePath);
+                        break;
+                    } case CWD_REQ: {
+                        String directory = command.replace(subCommand, "").replace("\r\n", "");
+                        ftpServer.changeWorkingDirectory(key, directory);
                         break;
                     }
                     default:{

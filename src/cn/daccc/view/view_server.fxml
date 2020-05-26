@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
+<?import javafx.scene.effect.*?>
+<?import javafx.scene.text.*?>
+<?import javafx.scene.*?>
+<?import javafx.embed.swing.*?>
 <?import javafx.scene.control.*?>
 <?import java.lang.*?>
 <?import javafx.scene.layout.*?>
@@ -8,16 +12,48 @@
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.Label?>
 
-<Pane fx:id="pane" maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="450.0" prefWidth="600.0" xmlns="http://javafx.com/javafx/8" xmlns:fx="http://javafx.com/fxml/1"
-fx:controller="cn.daccc.controller.Controller">
+<Pane fx:id="pane" maxHeight="410.0" maxWidth="600.0" minHeight="410.0" minWidth="600.0" prefHeight="410.0" prefWidth="600.0" xmlns="http://javafx.com/javafx/8" xmlns:fx="http://javafx.com/fxml/1" fx:controller="cn.daccc.controller.Controller">
    <children>
-      <ProgressBar fx:id="process_file" layoutX="46.0" layoutY="253.0" prefHeight="18.0" prefWidth="509.0" progress="0.0" />
+      <ProgressBar fx:id="process_file" layoutX="46.0" layoutY="267.0" prefHeight="18.0" prefWidth="509.0" progress="0.0" />
       <TextArea fx:id="textArea_serverScreen" editable="false" layoutX="46.0" layoutY="50.0" prefHeight="185.0" prefWidth="509.0" />
-      <Button fx:id="btn_startServer" onAction="#controlServer" layoutX="44.0" layoutY="388.0" mnemonicParsing="false" prefHeight="23.0" prefWidth="111.0" text="开启服务器" />
-      <TextField fx:id="textField_ipAddress" layoutX="46.0" layoutY="300.0" prefHeight="23.0" prefWidth="111.0" />
-      <Label layoutX="46.0" layoutY="282.0" text="IP地址：" />
-      <Label layoutX="46.0" layoutY="330.0" text="端口：" />
-      <TextField fx:id="textField_port" layoutX="46.0" layoutY="350.0" prefHeight="23.0" prefWidth="111.0" text="21" />
+      <Button fx:id="btn_startServer" layoutX="443.0" layoutY="311.0" mnemonicParsing="false" onAction="#controlServer" prefHeight="23.0" prefWidth="110.0" text="开启服务器">
+         <tooltip>
+            <Tooltip text="单击此处开启FTP服务器" />
+         </tooltip></Button>
+      <TextField fx:id="textField_ipAddress" layoutX="46.0" layoutY="312.0" prefHeight="23.0" prefWidth="111.0" promptText="正在获取...">
+         <tooltip>
+            <Tooltip text="FTP服务器IP地址" />
+         </tooltip></TextField>
+      <Label layoutX="46.0" layoutY="294.0" text="IP地址：" />
+      <Label layoutX="46.0" layoutY="342.0" text="端口：" />
+      <TextField fx:id="textField_port" layoutX="46.0" layoutY="362.0" prefHeight="23.0" prefWidth="111.0" text="21">
+         <tooltip>
+            <Tooltip text="FTP服务器端口" />
+         </tooltip></TextField>
       <Label layoutX="46.0" layoutY="29.0" text="服务器信息：" />
+      <Label layoutX="182.0" layoutY="342.0" text="服务器文件根目录：" />
+      <TextField fx:id="textField_serverRoot" editable="false" layoutX="182.0" layoutY="362.0" prefHeight="23.0" prefWidth="288.0" promptText="正在获取...">
+         <tooltip>
+            <Tooltip text="服务器文件所在根目录" />
+         </tooltip>
+      </TextField>
+      <Label layoutX="182.0" layoutY="294.0" text="用户名：" />
+      <TextField fx:id="textField_username" layoutX="182.0" layoutY="312.0" prefHeight="23.0" prefWidth="108.0" text="user">
+         <tooltip>
+            <Tooltip text="客户端登录用户名" />
+         </tooltip>
+      </TextField>
+      <Label layoutX="308.0" layoutY="294.0" text="密码：" />
+      <TextField fx:id="textField_password" layoutX="308.0" layoutY="312.0" prefHeight="23.0" prefWidth="122.0" text="123">
+         <tooltip>
+            <Tooltip text="客户端登录密码" />
+         </tooltip>
+      </TextField>
+      <Label layoutX="46.0" layoutY="246.0" text="客户端下载进度：" />
+      <Button fx:id="btn_openServerRoot" layoutX="483.0" layoutY="362.0" mnemonicParsing="false" onAction="#openServerRoot" prefHeight="23.0" prefWidth="72.0" text="打开目录">
+         <tooltip>
+            <Tooltip text="单击此处打开服务器文件根目录" />
+         </tooltip>
+      </Button>
    </children>
 </Pane>

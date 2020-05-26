@@ -14,6 +14,9 @@ public class FTPServer {
     private String serverRoot = "serverRoot";
     private String currentWorkingDirectory = "/";
     private String uploadFile = "";
+    private String currentLoginUsername = "";
+    private String username = "";
+    private String password = "";
     /* 服务器 21控制端口*/
     private static ServerHandler serverHandler;
     private static Selector serverSelector;
@@ -33,10 +36,11 @@ public class FTPServer {
         public static final String WELCOME = "220 Welcome to FTPServer. \r\n";
         public static final String UTF8_REQ = "OPTS UTF8 ON\r\n";
         public static final String UTF8_RESP = "200 OPTS UTF8 is set to ON.\r\n";
-        public static final String USER_REQ = "USER \r\n";
-        public static final String USER_RESP = "331 User name okay，need password. \r\n";
-        public static final String PASS_REQ = "PASS \r\n";
-        public static final String PASS_RESP = "230 User logged in.proceed. \r\n";
+        public static final String USER_REQ = "USER";
+        public static final String USER_RESP = "331 User name okay,need password. \r\n";
+        public static final String PASS_REQ = "PASS";
+        public static final String PASS_RESP_SUCCESS = "230 User logged in.proceed. \r\n";
+        public static final String PASS_RESP_FAIL = "530 Username or password is wrong. \r\n";
         public static final String PORT_REQ = "PORT";
         public static final String PORT_RESP_SUCCESS = "200 PORT command successful. \r\n";
         public static final String PORT_RESP_FAIL = "425 Can not open data connection. \r\n";
@@ -47,6 +51,8 @@ public class FTPServer {
         public static final String PUT_REQ = "STOR";
         public static final String FILE_RESP_MODE = "150 Opening Binary mode data connection. \r\n";
         public static final String FILE_RESP_FAIL = "550 No such file or directory. \r\n";
+        public static final String CWD_REQ = "CWD ";
+        public static final String CWD_RESP_SUCCESS = "250 Directory change to ";
 
         /* LIST GET PUT共用的响应 */
         public static final String TRANSFER_RESP = "226 Transfer complete. \r\n";
@@ -99,9 +105,42 @@ public class FTPServer {
         this.serverHandler = serverHandler;
     }
 
-    public void sendData (SocketChannel channel, String command) throws IOException {
-        System.out.println("发送:" + command);
-        byte[] bytes = command.getBytes();
+    public void setUser (String username, String password) {
+        this.username = username;
+        this.password = password;
+    }
+
+    public void user (SelectionKey key, String username) {
+        try {
+            sendResponse(key, Command.USER_RESP);
+            currentLoginUsername = username;
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void password (SelectionKey key, String password) {
+        try {
+            if (currentLoginUsername.equals(username) && this.password.equals(password)) {
+                sendResponse(key, Command.PASS_RESP_SUCCESS);
+            }else{
+                sendResponse(key, Command.PASS_RESP_FAIL);
+            }
+            System.out.println("curUsername:" + currentLoginUsername + "\nusername:" + username + "\npassword:" + password);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 向指定的通道发送数据，如List命令发送文件列表，也可以发送命令
+     * @param channel
+     * @param data
+     * @throws IOException
+     */
+    public void sendData (SocketChannel channel, String data) throws IOException {
+        System.out.println("发送:" + data);
+        byte[] bytes = data.getBytes();
         ByteBuffer byteBuffer = ByteBuffer.allocate(bytes.length);
         byteBuffer.put(bytes);
         byteBuffer.flip();
@@ -125,6 +164,13 @@ public class FTPServer {
         }
     }
 
+    /**
+     * 发送响应，并根据该响应进一步操作
+     * @param key
+     * @param resp
+     * @param extraInfo
+     * @throws IOException
+     */
     public void sendResponseWithExtra (SelectionKey key, String resp, String extraInfo) throws IOException {
         SocketChannel channel = (SocketChannel) (key.channel());
         ByteBuffer byteBuffer = (ByteBuffer) key.attachment();
@@ -150,6 +196,10 @@ public class FTPServer {
         }
     }
 
+    /**
+     * 开启21控制命令端口
+     * @throws IOException
+     */
     public void start () throws IOException {
         if (serverThread == null) {
             serverSocketChannel = ServerSocketChannel.open();
@@ -163,6 +213,10 @@ public class FTPServer {
         }
     }
 
+    /**
+     * 停止21控制命令端口
+     * @throws IOException
+     */
     public void stop() throws IOException {
         if (serverThread != null) {
             serverThread.interrupt();
@@ -234,6 +288,59 @@ public class FTPServer {
         }
     }
 
+    public void changeWorkingDirectory (SelectionKey key, String workingDirectory) throws IOException {
+        if (workingDirectory.equals("/")) {
+            currentWorkingDirectory = "/";
+            sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory + "\r\n");
+            return;
+        }
+
+        if (workingDirectory.lastIndexOf("/") == workingDirectory.length() - 1) {
+            workingDirectory = workingDirectory.substring(0, workingDirectory.length() - 1);
+        }
+        workingDirectory = workingDirectory.replaceAll("/{2}", "");
+
+        if (workingDirectory.indexOf("/") == 0) {
+            File directory = new File(serverRoot + workingDirectory);
+            if (directory.isDirectory() && directory.exists()) {
+                currentWorkingDirectory = workingDirectory + "/";
+                sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory.substring(0, currentWorkingDirectory.length() - 1) + "\r\n");
+            } else {
+                sendResponse(key, Command.FILE_RESP_FAIL);
+            }
+            return;
+        }
+
+        if (workingDirectory.equals("..")) {
+            if (currentWorkingDirectory.equals("/")) {
+                sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory + "\r\n");
+                return;
+            }
+            int index = currentWorkingDirectory.substring(0, currentWorkingDirectory.length() - 1).lastIndexOf("/");
+            if (index != 0) {
+                currentWorkingDirectory = currentWorkingDirectory.substring(0, index + 1);
+                sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory.substring(0, currentWorkingDirectory.length() - 1) + "\r\n");
+            }else{
+                currentWorkingDirectory = "/";
+                sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory + "\r\n");
+            }
+            return;
+        }
+
+        File directory = new File(serverRoot + currentWorkingDirectory + workingDirectory);
+        if (directory.isDirectory() && directory.exists()) {
+            currentWorkingDirectory += workingDirectory + "/";
+            sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory.substring(0, currentWorkingDirectory.length() - 1) + "\r\n");
+        }else{
+            sendResponse(key, Command.FILE_RESP_FAIL);
+        }
+    }
+
+    /**
+     * 查询服务器根目录文件列表
+     * @param directory
+     * @return
+     */
     public String queryFileList (String directory) {
         File serverRoot = new File(this.serverRoot);
         File filePath = new File(this.serverRoot + currentWorkingDirectory + directory);
@@ -275,6 +382,7 @@ public class FTPServer {
 
     public void fileUpload (SelectionKey key, String filePath) throws IOException {
         connectDataSocket();
+        createDirectory(filePath);
         uploadFile = serverRoot + currentWorkingDirectory + filePath;
         System.out.println("上传:" + serverRoot + currentWorkingDirectory + filePath);
         dataHandler.setServerKey(key);
@@ -300,6 +408,19 @@ public class FTPServer {
     }
 
     /**
+     * 创建文件夹
+     * @param path
+     */
+    private void createDirectory (String path) {
+        int index = path.lastIndexOf("/");
+        if (index != -1) {
+            String directoryPath = path.substring(0, index);
+            File directory = new File(serverRoot + currentWorkingDirectory + directoryPath);
+            directory.mkdirs();
+        }
+    }
+
+    /**
      * 文件下载线程，将服务器文件传输到客户端
      */
     private class FileDownloadThread extends Thread{
@@ -317,6 +438,7 @@ public class FTPServer {
                 long totalLen = file.length(), currentLen = 0;
                 int offset;
                 int count = 1;
+                int wait = 16;
                 FileChannel fileChannel = new FileInputStream(file).getChannel();
                 ByteBuffer byteBuffer = ByteBuffer.allocate(1460);
                 serverHandler.outPrint("客户端正在下载文件，总大小:" + totalLen + "B≈" + totalLen / 1024 + "KB≈" + totalLen / 1024 / 1024 + "MB");
@@ -326,14 +448,21 @@ public class FTPServer {
                     byteBuffer.clear();
                     currentLen += offset;
                     serverHandler.fileProcess(currentLen / (1.0 * totalLen));
-                    if ((count = count << 2) > 32767) {
-                        //若不休眠，一次性发送过多数据容易造成流量控制，从而丢包
-                        count = 1;
-                        Thread.sleep(4);
+                    count++;
+                    //一次性发送过多数据容易造成流量控制，从而丢包因此逐步加大传输的数据
+                    if (count == 4096) {
+                        wait = 8;
+                        byteBuffer = ByteBuffer.allocate(2190);
+                    } else if (count == 8192) {
+                        wait = 4;
+                        byteBuffer = ByteBuffer.allocate(2920);
+                    } else if (count % wait == 0) {
+                        Thread.sleep(1);
                     }
                 }
                 fileChannel.close();
                 closeDataSocket();
+                Thread.sleep(100);
                 sendResponse(key, Command.TRANSFER_RESP);
                 serverHandler.outPrint("文件传输完成!");
             } catch (IOException | InterruptedException e) {
@@ -342,6 +471,9 @@ public class FTPServer {
         }
     }
 
+    /**
+     * 20端口读取字节流的线程
+     */
     private class DataChannelSelectorThread extends Thread{
         @Override
         public void run () {
@@ -377,7 +509,9 @@ public class FTPServer {
     }
 
 
-
+    /**
+     * 21端口读取字节流的线程
+     */
     private class ServerThread extends Thread {
         @Override
         public void run () {
