@@ -383,7 +383,11 @@ public class FTPServer {
     public void fileUpload (SelectionKey key, String filePath) throws IOException {
         connectDataSocket();
         createDirectory(filePath);
-        uploadFile = serverRoot + currentWorkingDirectory + filePath;
+        if (filePath.indexOf("/") == 0) {
+            uploadFile = serverRoot + filePath;
+        }else{
+            uploadFile = serverRoot + currentWorkingDirectory + filePath;
+        }
         System.out.println("上传:" + serverRoot + currentWorkingDirectory + filePath);
         dataHandler.setServerKey(key);
         sendResponse(key, Command.FILE_RESP_MODE);
@@ -415,7 +419,12 @@ public class FTPServer {
         int index = path.lastIndexOf("/");
         if (index != -1) {
             String directoryPath = path.substring(0, index);
-            File directory = new File(serverRoot + currentWorkingDirectory + directoryPath);
+            File directory;
+            if (path.indexOf("/") == 0) {
+                directory = new File(serverRoot + directoryPath);
+            }else{
+                directory = new File(serverRoot + currentWorkingDirectory + directoryPath);
+            }
             directory.mkdirs();
         }
     }
