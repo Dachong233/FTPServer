@@ -4,6 +4,7 @@ import cn.daccc.util.TimeUtil;
 import cn.daccc.model.FTPServer;
 import cn.daccc.model.MyServerHandler;
 import cn.daccc.util.IPUtil;
+import javafx.application.Platform;
 import javafx.event.ActionEvent;
 import javafx.fxml.Initializable;
 import javafx.scene.control.Button;
@@ -31,6 +32,7 @@ public class Controller implements Initializable {
     private static boolean hasOpen = false;
     private static FTPServer ftpServer;
     private static StringBuffer serverScreen = new StringBuffer();
+    private static long lastLen = 0;
     private static double process = 0;
     public ProgressBar process_file;
     public TextField textField_serverRoot;
@@ -51,6 +53,7 @@ public class Controller implements Initializable {
     public void initialize (URL location, ResourceBundle resources) {
         initView();
         new initThread().start();
+        new RefreshThread().start();
     }
 
     public void initView() {
@@ -104,8 +107,6 @@ public class Controller implements Initializable {
     public void appendToScreen (String text) {
         System.out.println(text);
         serverScreen.append(TimeUtil.getTime()).append(" ").append(text);
-        textArea_serverScreen.setText(serverScreen.toString());
-        textArea_serverScreen.positionCaret(textArea_serverScreen.getLength());
     }
 
     public void clearScreen() {
@@ -148,4 +149,28 @@ public class Controller implements Initializable {
             textField_serverRoot.setText(serverRoot.getAbsolutePath());
         }
     }
+
+    private class RefreshThread extends Thread {
+        @Override
+        public void run () {
+            while (true) {
+                try {
+                    boolean modify = false;
+                    if (lastLen != serverScreen.length()) {
+                        textArea_serverScreen.setText(serverScreen.toString());
+                        lastLen = serverScreen.length();
+                        modify = true;
+                    }
+                    sleep(200);
+                    if (modify) {
+                        textArea_serverScreen.positionCaret(textArea_serverScreen.getLength());
+                    }
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+
+
+        }
+    };
 }

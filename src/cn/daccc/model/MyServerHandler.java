@@ -77,6 +77,18 @@ public class MyServerHandler implements FTPServer.ServerHandler {
                 ftpServer.sendResponse(key, UTF8_RESP);
                 break;
             }
+            case SYST_REQ: {
+                ftpServer.sendResponse(key, SYST_RESP);
+                break;
+            }
+            case TYPE_REQ: {
+                ftpServer.sendResponse(key, TYPE_RESP);
+                break;
+            }
+            case PWD_REQ:{
+                ftpServer.printWorkingDirectory(key);
+                break;
+            }
             case QUIT_REQ: {
                 ftpServer.sendResponse(key, QUIT_RESP);
                 break;
@@ -92,7 +104,13 @@ public class MyServerHandler implements FTPServer.ServerHandler {
                         ftpServer.password(key, command.replace(subCommand + " ", "").replaceAll("[\r\n]", ""));
                         break;
                     }
+                    case PASV_REQ: {
+                        ftpServer.setPORTMode(false);
+                        ftpServer.openDataSocketInPASV(key);
+                        break;
+                    }
                     case PORT_REQ:{
+                        ftpServer.setPORTMode(true);
                         String[] clientInfo = command.replaceAll("[\r\n]", "").substring(5).split(",");
                         if (clientInfo.length < 6) {
                             ftpServer.sendResponse(key, PORT_RESP_FAIL);
@@ -100,7 +118,7 @@ public class MyServerHandler implements FTPServer.ServerHandler {
                         }
                         String clientIP = clientInfo[0] + "." + clientInfo[1] + "." + clientInfo[2] + "." + clientInfo[3];
                         int clientPort = Integer.parseInt(clientInfo[4]) * 256 + Integer.parseInt(clientInfo[5]);
-                        ftpServer.openDataSocket(key, clientIP, clientPort);
+                        ftpServer.openDataSocketInPORT(key, clientIP, clientPort);
                         break;
                     }
                     case LIST_REQ: {
@@ -108,7 +126,11 @@ public class MyServerHandler implements FTPServer.ServerHandler {
                             subCommand = subCommand + " ";
                         }
                         String filePath = command.replaceAll("[\r\n]", "").replace(subCommand, "");
-                        ftpServer.sendResponseWithExtra(key, LIST_RESP_MODE, filePath);
+                        if (!"-l".equals(filePath)) {
+                            ftpServer.sendResponseWithExtra(key, LIST_RESP_MODE, filePath);
+                        } else {
+                            ftpServer.sendResponseWithExtra(key, LIST_RESP_MODE, "\\");
+                        }
                         break;
                     }
                     case GET_REQ: {
@@ -122,6 +144,10 @@ public class MyServerHandler implements FTPServer.ServerHandler {
                     } case CWD_REQ: {
                         String directory = command.replace(subCommand, "").replace("\r\n", "");
                         ftpServer.changeWorkingDirectory(key, directory);
+                        break;
+                    } case SIZE_REQ: {
+                        String filePath = command.replace(subCommand + " ", "").replace("\r\n", "");
+                        ftpServer.fileSize(key, filePath);
                         break;
                     }
                     default:{

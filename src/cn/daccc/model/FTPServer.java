@@ -1,5 +1,6 @@
 package cn.daccc.model;
 
+import cn.daccc.util.IPUtil;
 import cn.daccc.util.TimeUtil;
 
 import java.io.*;
@@ -9,8 +10,9 @@ import java.nio.channels.*;
 import java.util.Iterator;
 
 public class FTPServer {
-    private String ip;
-    private int port;
+    private String serverIP;
+    private int serverPort;
+    private boolean portMode = true;
     private String serverRoot = "serverRoot";
     private String currentWorkingDirectory = "/";
     private String uploadFile = "";
@@ -23,14 +25,20 @@ public class FTPServer {
     private static ServerThread serverThread;
     private static ServerSocketChannel serverSocketChannel;
 
-    /*服务器 20数据端口*/
+    /*服务器 数据端口*/
     private static DataHandler dataHandler;
     private static Selector dataSelector;
     private static DataChannelSelectorThread dataThread;
-    private static SocketChannel dataSocketChannel;
+    /*服务器 主动模式数据端口*/
+    private static SocketChannel portSocketChannel;
     private boolean hasFinishUpload;
     private String clientIP;
     private int clientPort;
+
+    /*服务器 被动模式数据端口*/
+    private static ServerSocketChannel dataServerSocketChannel;
+    private static SocketChannel pasvSocketChannel;
+
 
     public static class Command {
         public static final String WELCOME = "220 Welcome to FTPServer. \r\n";
@@ -41,18 +49,30 @@ public class FTPServer {
         public static final String PASS_REQ = "PASS";
         public static final String PASS_RESP_SUCCESS = "230 User logged in.proceed. \r\n";
         public static final String PASS_RESP_FAIL = "530 Username or password is wrong. \r\n";
+        public static final String SYST_REQ = "SYST\r\n";
+        public static final String SYST_RESP = "215 UNIX Type: L8\r\n";
+        public static final String TYPE_REQ = "TYPE I\r\n";
+        public static final String TYPE_RESP = "200 TYPE set to I.\r\n";
+        public static final String SIZE_REQ = "SIZE";
+        public static final String SIZE_RESP_FILE = "213 ";
+        public static final String SIZE_RESP_DIR = "550 ";
         public static final String PORT_REQ = "PORT";
         public static final String PORT_RESP_SUCCESS = "200 PORT command successful. \r\n";
         public static final String PORT_RESP_FAIL = "425 Can not open data connection. \r\n";
+        public static final String PASV_REQ = "PASV";
+        public static final String PASV_RESP = "227 Entering Passive Mode ";
         public static final String LIST_REQ = "LIST";
         public static final String LIST_RESP_MODE = "150 Opening ASCII mode data connection. \r\n";
         public static final String GET_REQ = "RETR";
         public static final String GET_RESP_FAIL = "550 It's a directory. \r\n";
         public static final String PUT_REQ = "STOR";
         public static final String FILE_RESP_MODE = "150 Opening Binary mode data connection. \r\n";
-        public static final String FILE_RESP_FAIL = "550 No such file or directory. \r\n";
+        public static final String FILE_RESP_NOTFIND = "550 No such file or directory. \r\n";
+        public static final String PWD_REQ = "PWD\r\n";
+        public static final String PWD_RESP = "257 ";
         public static final String CWD_REQ = "CWD ";
         public static final String CWD_RESP_SUCCESS = "250 Directory change to ";
+        public static final String CWD_RESP_FILE = "550 No such directory. \r\n";
 
         /* LIST GET PUT共用的响应 */
         public static final String TRANSFER_RESP = "226 Transfer complete. \r\n";
@@ -63,11 +83,16 @@ public class FTPServer {
     }
 
     public interface ServerHandler {
-        void accept(SelectionKey key) throws IOException;
-        void read(SelectionKey key) throws IOException;
-        void startSuccess();
-        void stopSuccess();
+        void accept (SelectionKey key) throws IOException;
+
+        void read (SelectionKey key) throws IOException;
+
+        void startSuccess ();
+
+        void stopSuccess ();
+
         void fileProcess (double process);
+
         void outPrint (String msg);
     }
 
@@ -97,11 +122,20 @@ public class FTPServer {
             sendResponse(serverKey, Command.TRANSFER_RESP);
             serverHandler.outPrint("文件传输完成！总大小:" + totalLen + "B≈" + totalLen / 1024 + "KB≈" + totalLen / 1024 / 1024 + "MB");
         }
+
+        public void accept (SelectionKey key) throws IOException {
+            if(portMode) return;
+            System.out.println("PASV模式accept");
+            ServerSocketChannel serverSocketChannel = ((ServerSocketChannel) key.channel());
+            pasvSocketChannel = serverSocketChannel.accept();
+            pasvSocketChannel.configureBlocking(false);
+            pasvSocketChannel.register(dataSelector, SelectionKey.OP_READ);
+        }
     }
 
-    public FTPServer (String ip, int port, ServerHandler serverHandler) {
-        this.ip = ip;
-        this.port = port;
+    public FTPServer (String serverIP, int serverPort, ServerHandler serverHandler) {
+        this.serverIP = serverIP;
+        this.serverPort = serverPort;
         this.serverHandler = serverHandler;
     }
 
@@ -123,7 +157,7 @@ public class FTPServer {
         try {
             if (currentLoginUsername.equals(username) && this.password.equals(password)) {
                 sendResponse(key, Command.PASS_RESP_SUCCESS);
-            }else{
+            } else {
                 sendResponse(key, Command.PASS_RESP_FAIL);
             }
             System.out.println("curUsername:" + currentLoginUsername + "\nusername:" + username + "\npassword:" + password);
@@ -132,8 +166,13 @@ public class FTPServer {
         }
     }
 
+    public void setPORTMode (boolean portMode) {
+        this.portMode = portMode;
+    }
+
     /**
      * 向指定的通道发送数据，如List命令发送文件列表，也可以发送命令
+     *
      * @param channel
      * @param data
      * @throws IOException
@@ -153,12 +192,15 @@ public class FTPServer {
         byteBuffer.clear();
         byteBuffer.put(resp.getBytes());
         byteBuffer.flip();
-        channel.write(byteBuffer);
+        if (channel.isOpen()) {
+            channel.write(byteBuffer);
+        }
         switch (resp) {
-            case Command.QUIT_RESP:{
+            case Command.QUIT_RESP: {
                 channel.socket().close();
                 channel.close();
                 key.cancel();
+                currentWorkingDirectory = "/";
                 break;
             }
         }
@@ -166,6 +208,7 @@ public class FTPServer {
 
     /**
      * 发送响应，并根据该响应进一步操作
+     *
      * @param key
      * @param resp
      * @param extraInfo
@@ -180,15 +223,44 @@ public class FTPServer {
         channel.write(byteBuffer);
         switch (resp) {
             case Command.LIST_RESP_MODE: {
-                connectDataSocket();
-                String fileList = queryFileList(extraInfo);
-                if (!"".equals(fileList)) {
-                    sendData(dataSocketChannel, fileList);
-                    closeDataSocket();
-                    sendResponse(key, Command.TRANSFER_RESP);
-                }else{
-                    closeDataSocket();
-                    sendResponse(key, Command.FILE_RESP_FAIL);
+                if (portMode) {
+                    connectDataSocketInPORT();
+                    String fileList = queryFileList(extraInfo);
+                    if (!"".equals(fileList)) {
+                        sendData(portSocketChannel, fileList);
+                        closeDataSocketInPORT();
+                        sendResponse(key, Command.TRANSFER_RESP);
+                    } else {
+                        closeDataSocketInPORT();
+                        sendResponse(key, Command.FILE_RESP_NOTFIND);
+                    }
+                } else {
+                    String fileList = queryFileList(extraInfo);
+                    if (!"".equals(fileList)) {
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run () {
+                                while (pasvSocketChannel == null) {
+                                    try {
+                                        Thread.sleep(10);
+                                    } catch (InterruptedException e) {
+                                        e.printStackTrace();
+                                    }
+                                }
+                                try {
+                                    sendData(pasvSocketChannel, fileList);
+                                    closeDataSocketInPASV();
+                                    sendResponse(key, Command.TRANSFER_RESP);
+                                } catch (IOException e) {
+                                    e.printStackTrace();
+                                }
+
+                            }
+                        }).start();
+                    } else {
+                        closeDataSocketInPASV();
+                        sendResponse(key, Command.FILE_RESP_NOTFIND);
+                    }
                 }
                 break;
             }
@@ -198,12 +270,13 @@ public class FTPServer {
 
     /**
      * 开启21控制命令端口
+     *
      * @throws IOException
      */
     public void start () throws IOException {
         if (serverThread == null) {
             serverSocketChannel = ServerSocketChannel.open();
-            serverSocketChannel.bind(new InetSocketAddress(ip, port));
+            serverSocketChannel.bind(new InetSocketAddress(serverIP, serverPort));
             serverSocketChannel.configureBlocking(false);
             serverSelector = Selector.open();
             serverSocketChannel.register(serverSelector, SelectionKey.OP_ACCEPT);
@@ -215,9 +288,10 @@ public class FTPServer {
 
     /**
      * 停止21控制命令端口
+     *
      * @throws IOException
      */
-    public void stop() throws IOException {
+    public void stop () throws IOException {
         if (serverThread != null) {
             serverThread.interrupt();
             serverThread = null;
@@ -228,16 +302,17 @@ public class FTPServer {
             serverSelector.close();
             serverSocketChannel.close();
             serverHandler.stopSuccess();
+            currentWorkingDirectory = "/";
         }
     }
 
     /**
-     * 开启20端口
+     * 主动模式，开启20端口
      */
-    public void openDataSocket (SelectionKey key, String clientIP, int clientPort) {
+    public void openDataSocketInPORT (SelectionKey key, String clientIP, int clientPort) {
         try {
-            dataSocketChannel = SocketChannel.open();
-            dataSocketChannel.bind(new InetSocketAddress(ip, 20));
+            portSocketChannel = SocketChannel.open();
+            portSocketChannel.bind(new InetSocketAddress(serverIP, 20));
             this.clientIP = clientIP;
             this.clientPort = clientPort;
             sendResponse(key, Command.PORT_RESP_SUCCESS);
@@ -252,14 +327,14 @@ public class FTPServer {
     }
 
     /**
-     * 主动连接客户端指定端口
+     * 主动模式，主动连接客户端指定端口
      */
-    public void connectDataSocket () {
+    public void connectDataSocketInPORT () {
         try {
-            dataSocketChannel.connect(new InetSocketAddress(clientIP, clientPort));
-            dataSocketChannel.configureBlocking(false);
+            portSocketChannel.connect(new InetSocketAddress(clientIP, clientPort));
+            portSocketChannel.configureBlocking(false);
             dataSelector = Selector.open();
-            dataSocketChannel.register(dataSelector, SelectionKey.OP_READ);
+            portSocketChannel.register(dataSelector, SelectionKey.OP_READ);
             dataThread = new DataChannelSelectorThread();
             dataThread.start();
             dataHandler = new DataHandler();
@@ -271,21 +346,91 @@ public class FTPServer {
 
 
     /**
-     * 关闭20端口
+     * 主动模式，关闭20端口
      */
-    public void closeDataSocket () {
+    public void closeDataSocketInPORT () {
         try {
             if (dataThread != null) {
                 dataThread.interrupt();
                 dataThread = null;
             }
-            dataSocketChannel.socket().close();
-            dataSocketChannel.close();
+            portSocketChannel.socket().close();
+            portSocketChannel.close();
             dataSelector.close();
         } catch (IOException e) {
             serverHandler.outPrint(e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    /**
+     * 被动模式，开启数据端口
+     *
+     * @param key
+     */
+    public void openDataSocketInPASV (SelectionKey key) {
+        try {
+            dataServerSocketChannel = ServerSocketChannel.open();
+            dataServerSocketChannel.configureBlocking(false);
+            int port = 49152, failCount = 0;
+            boolean success = false;
+            while (!success && failCount <= 16) {
+                try {
+                    port = IPUtil.getRandomPort();
+                    dataServerSocketChannel.bind(new InetSocketAddress(serverIP, port));
+                    success = true;
+                } catch (IOException e) {
+                    failCount++;
+                }
+            }
+            if (success) {
+                String ipString = serverIP.replaceAll("\\.", ",");
+                String portString = port / 256 + "," + port % 256;
+                String resp = Command.PASV_RESP + "(" + ipString + "," + portString + ")\r\n";
+                sendResponse(key, resp);
+                dataSelector = Selector.open();
+                dataServerSocketChannel.register(dataSelector, SelectionKey.OP_ACCEPT);
+                dataThread = new DataChannelSelectorThread();
+                dataThread.start();
+                dataHandler = new DataHandler();
+            } else {
+                sendResponse(key, Command.PORT_RESP_FAIL);
+            }
+        } catch (IOException e) {
+            try {
+                sendResponse(key, Command.PORT_RESP_FAIL);
+            } catch (IOException ioException) {
+                ioException.printStackTrace();
+            }
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 关闭被动模式下的数据端口
+     */
+    public void closeDataSocketInPASV() {
+        try {
+            if (dataThread != null) {
+                dataThread.interrupt();
+                dataThread = null;
+            }
+            if (pasvSocketChannel != null) {
+                pasvSocketChannel.socket().close();
+                pasvSocketChannel.close();
+            }
+            dataServerSocketChannel.socket().close();
+            dataServerSocketChannel.close();
+            dataSelector.close();
+        } catch (IOException e) {
+            serverHandler.outPrint(e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public void printWorkingDirectory (SelectionKey key) throws IOException {
+        String resp = Command.PWD_RESP + "\"" + currentWorkingDirectory + "\" is current directory.\r\n";
+        sendResponse(key, resp);
     }
 
     public void changeWorkingDirectory (SelectionKey key, String workingDirectory) throws IOException {
@@ -306,7 +451,7 @@ public class FTPServer {
                 currentWorkingDirectory = workingDirectory + "/";
                 sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory.substring(0, currentWorkingDirectory.length() - 1) + "\r\n");
             } else {
-                sendResponse(key, Command.FILE_RESP_FAIL);
+                sendResponse(key, Command.FILE_RESP_NOTFIND);
             }
             return;
         }
@@ -320,7 +465,7 @@ public class FTPServer {
             if (index != 0) {
                 currentWorkingDirectory = currentWorkingDirectory.substring(0, index + 1);
                 sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory.substring(0, currentWorkingDirectory.length() - 1) + "\r\n");
-            }else{
+            } else {
                 currentWorkingDirectory = "/";
                 sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory + "\r\n");
             }
@@ -328,16 +473,21 @@ public class FTPServer {
         }
 
         File directory = new File(serverRoot + currentWorkingDirectory + workingDirectory);
-        if (directory.isDirectory() && directory.exists()) {
-            currentWorkingDirectory += workingDirectory + "/";
-            sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory.substring(0, currentWorkingDirectory.length() - 1) + "\r\n");
-        }else{
-            sendResponse(key, Command.FILE_RESP_FAIL);
+        if (directory.exists()) {
+            if (directory.isDirectory()) {
+                currentWorkingDirectory += workingDirectory + "/";
+                sendResponse(key, Command.CWD_RESP_SUCCESS + currentWorkingDirectory.substring(0, currentWorkingDirectory.length() - 1) + "\r\n");
+            } else {
+                sendResponse(key, Command.CWD_RESP_FILE);
+            }
+        } else {
+            sendResponse(key, Command.FILE_RESP_NOTFIND);
         }
     }
 
     /**
      * 查询服务器根目录文件列表
+     *
      * @param directory
      * @return
      */
@@ -380,12 +530,31 @@ public class FTPServer {
         return fileListString.toString();
     }
 
+    public void fileSize (SelectionKey key, String filePath) throws IOException {
+        if (filePath.indexOf("/") == 0) {
+            filePath = filePath.substring(1);
+        }
+        filePath = serverRoot + currentWorkingDirectory + filePath;
+        File file = new File(filePath);
+        if (!file.exists()) {
+            sendResponse(key, Command.FILE_RESP_NOTFIND);
+            return;
+        }
+        if (file.isDirectory()) {
+            sendResponse(key, Command.SIZE_RESP_DIR + filePath + ": Is a directory. \r\n");
+        } else {
+            sendResponse(key, Command.SIZE_RESP_FILE + file.length() + "\r\n");
+        }
+    }
+
     public void fileUpload (SelectionKey key, String filePath) throws IOException {
-        connectDataSocket();
+        if (portMode) {
+            connectDataSocketInPORT();
+        }
         createDirectory(filePath);
         if (filePath.indexOf("/") == 0) {
             uploadFile = serverRoot + filePath;
-        }else{
+        } else {
             uploadFile = serverRoot + currentWorkingDirectory + filePath;
         }
         System.out.println("上传:" + serverRoot + currentWorkingDirectory + filePath);
@@ -394,17 +563,24 @@ public class FTPServer {
     }
 
     public void fileDownload (SelectionKey key, String filePath) throws IOException {
-        connectDataSocket();
+        if (portMode) {
+            connectDataSocketInPORT();
+        }
+
         File file = new File(serverRoot + currentWorkingDirectory + filePath);
         System.out.println("下载:" + serverRoot + currentWorkingDirectory + filePath);
         if (file.isDirectory()) {
             sendResponse(key, Command.GET_RESP_FAIL);
-            closeDataSocket();
+            if (portMode) {
+                closeDataSocketInPORT();
+            }
             return;
         }
         if (!file.exists()) {
-            sendResponse(key, Command.FILE_RESP_FAIL);
-            closeDataSocket();
+            sendResponse(key, Command.FILE_RESP_NOTFIND);
+            if (portMode) {
+                closeDataSocketInPORT();
+            }
             return;
         }
         sendResponse(key, Command.FILE_RESP_MODE);
@@ -413,6 +589,7 @@ public class FTPServer {
 
     /**
      * 创建文件夹
+     *
      * @param path
      */
     private void createDirectory (String path) {
@@ -422,7 +599,7 @@ public class FTPServer {
             File directory;
             if (path.indexOf("/") == 0) {
                 directory = new File(serverRoot + directoryPath);
-            }else{
+            } else {
                 directory = new File(serverRoot + currentWorkingDirectory + directoryPath);
             }
             directory.mkdirs();
@@ -432,7 +609,7 @@ public class FTPServer {
     /**
      * 文件下载线程，将服务器文件传输到客户端
      */
-    private class FileDownloadThread extends Thread{
+    private class FileDownloadThread extends Thread {
         private SelectionKey key;
         private File file;
 
@@ -448,29 +625,52 @@ public class FTPServer {
                 int offset;
                 int count = 1;
                 int wait = 16;
+                long sleepTime = 5;
                 FileChannel fileChannel = new FileInputStream(file).getChannel();
-                ByteBuffer byteBuffer = ByteBuffer.allocate(1460);
+                ByteBuffer byteBuffer = ByteBuffer.allocate(1460);;
+                if (!portMode) {
+                    wait = 8;
+                    sleepTime = 5;
+                }
+
                 serverHandler.outPrint("客户端正在下载文件，总大小:" + totalLen + "B≈" + totalLen / 1024 + "KB≈" + totalLen / 1024 / 1024 + "MB");
                 while ((offset = fileChannel.read(byteBuffer)) != -1) {
                     byteBuffer.flip();
-                    dataSocketChannel.write(byteBuffer);
+                    if (portMode) {
+                        portSocketChannel.write(byteBuffer);
+                    } else if (pasvSocketChannel != null) {
+                        pasvSocketChannel.write(byteBuffer);
+                    }
                     byteBuffer.clear();
                     currentLen += offset;
                     serverHandler.fileProcess(currentLen / (1.0 * totalLen));
                     count++;
                     //一次性发送过多数据容易造成流量控制，从而丢包因此逐步加大传输的数据
                     if (count == 4096) {
-                        wait = 8;
-                        byteBuffer = ByteBuffer.allocate(2190);
+                        if (portMode) {
+                            wait = 10;
+                        } else {
+                            wait = 6;
+                        }
                     } else if (count == 8192) {
-                        wait = 4;
-                        byteBuffer = ByteBuffer.allocate(2920);
-                    } else if (count % wait == 0) {
-                        Thread.sleep(1);
+                        byteBuffer = ByteBuffer.allocate(2960);
+                        if (portMode) {
+                            wait = 4;
+                        } else {
+                            wait = 2;
+                            sleepTime = 3;
+                        }
+                    }else if (count % wait == 0) {
+                        Thread.sleep(sleepTime);
                     }
                 }
                 fileChannel.close();
-                closeDataSocket();
+                if (portMode) {
+                    closeDataSocketInPORT();
+                } else {
+                    closeDataSocketInPASV();
+                }
+
                 Thread.sleep(100);
                 sendResponse(key, Command.TRANSFER_RESP);
                 serverHandler.outPrint("文件传输完成!");
@@ -481,14 +681,14 @@ public class FTPServer {
     }
 
     /**
-     * 20端口读取字节流的线程
+     * 数据端口读取字节流的线程
      */
-    private class DataChannelSelectorThread extends Thread{
+    private class DataChannelSelectorThread extends Thread {
         @Override
         public void run () {
             while (!isInterrupted()) {
-                if (hasFinishUpload) {
-                    closeDataSocket();
+                if (hasFinishUpload && portMode) {
+                    closeDataSocketInPORT();
                     hasFinishUpload = false;
                     break;
                 }
@@ -501,6 +701,9 @@ public class FTPServer {
                     while (iterator.hasNext()) {
                         try {
                             SelectionKey key = iterator.next();
+                            if (key.isAcceptable()) {
+                                dataHandler.accept(key);
+                            }
                             if (key.isReadable()) {
                                 dataHandler.read(key);
                             }
@@ -511,6 +714,7 @@ public class FTPServer {
 
                     }
                 } catch (IOException e) {
+                    serverHandler.outPrint(e.getMessage());
                     e.printStackTrace();
                 }
             }
@@ -519,7 +723,7 @@ public class FTPServer {
 
 
     /**
-     * 21端口读取字节流的线程
+     * 指令端口读取字节流的线程
      */
     private class ServerThread extends Thread {
         @Override

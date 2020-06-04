@@ -9,8 +9,8 @@ import java.util.GregorianCalendar;
 public class TimeUtil {
     private static final SimpleDateFormat FORMATTER = new SimpleDateFormat("HH:mm:ss");
     private static final SimpleDateFormat FORMATTER_MODIFIED = new SimpleDateFormat("dd HH:ss");
-    private static final String[] months = {"January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December"};
+    private static final String[] months = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     public static String getTime() {
         Date date = new Date();
         return FORMATTER.format(date);

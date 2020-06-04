@@ -2,6 +2,7 @@ package cn.daccc.util;
 
 import java.net.*;
 import java.util.Enumeration;
+import java.util.Random;
 
 public class IPUtil {
     private static InetAddress ip;
@@ -60,6 +61,11 @@ public class IPUtil {
                     + e.getMessage());
         }
         return null;
+    }
+
+    public static int getRandomPort() {
+        Random r = new Random(System.currentTimeMillis());
+        return r.nextInt(65534 - 49152) + 49152;
     }
 
 }
