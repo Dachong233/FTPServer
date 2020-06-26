@@ -249,8 +249,8 @@ public class FTPServer {
                                 }
                                 try {
                                     sendData(pasvSocketChannel, fileList);
-                                    closeDataSocketInPASV();
                                     sendResponse(key, Command.TRANSFER_RESP);
+                                    closeDataSocketInPASV();
                                 } catch (IOException e) {
                                     e.printStackTrace();
                                 }
@@ -621,7 +621,7 @@ public class FTPServer {
         @Override
         public void run () {
             try {
-                long totalLen = file.length(), currentLen = 0;
+                /*long totalLen = file.length(), currentLen = 0;
                 int offset;
                 int count = 1;
                 int wait = 16;
@@ -663,6 +663,33 @@ public class FTPServer {
                     }else if (count % wait == 0) {
                         Thread.sleep(sleepTime);
                     }
+                }
+                fileChannel.close();
+                if (portMode) {
+                    closeDataSocketInPORT();
+                } else {
+                    closeDataSocketInPASV();
+                }
+
+                Thread.sleep(100);
+                sendResponse(key, Command.TRANSFER_RESP);
+                serverHandler.outPrint("文件传输完成!");*/
+                long totalLen = file.length(), currentLen = 0;
+                int offset;
+                FileChannel fileChannel = new FileInputStream(file).getChannel();
+                ByteBuffer byteBuffer = ByteBuffer.allocate(4096);
+                serverHandler.outPrint("客户端正在下载文件，总大小:" + totalLen + "B≈" + totalLen / 1024 + "KB≈" + totalLen / 1024 / 1024 + "MB");
+                while ((offset = fileChannel.read(byteBuffer)) != -1) {
+                    byteBuffer.flip();
+                    if (portMode) {
+                        portSocketChannel.write(byteBuffer);
+                    } else if (pasvSocketChannel != null) {
+                        pasvSocketChannel.write(byteBuffer);
+                    }
+                    byteBuffer.clear();
+                    currentLen += offset;
+                    serverHandler.fileProcess(currentLen / (1.0 * totalLen));
+                    Thread.sleep(1);
                 }
                 fileChannel.close();
                 if (portMode) {
